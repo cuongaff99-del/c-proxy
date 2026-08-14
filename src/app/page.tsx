@@ -27,7 +27,13 @@ export default function Home() {
         const res = await fetch('/api/proxies', { signal: controller.signal })
         if (!res.ok) throw new Error('Lỗi tải proxy list')
         const data = await res.json()
-        setProxies(data)
+        if (Array.isArray(data)) {
+          setProxies(data)
+        } else if (Array.isArray(data.proxies)) {
+          setProxies(data.proxies)
+        } else {
+          setProxies([])
+        }
         setError(null)
       } catch (err: any) {
         if (err.name !== 'AbortError') setError(err.message || 'Lỗi không xác định')
@@ -56,9 +62,9 @@ export default function Home() {
   })
 
   const badgeClass = (proto: string) => {
-    if (proto === 'http') return 'badge-http'
-    if (proto === 'socks4') return 'badge-socks4'
-    if (proto === 'socks5') return 'badge-socks5'
+    if (proto === 'http') return 'bg-blue-500 text-white px-2 py-1 rounded text-xs font-medium'
+    if (proto === 'socks4') return 'bg-orange-500 text-white px-2 py-1 rounded text-xs font-medium'
+    if (proto === 'socks5') return 'bg-purple-500 text-white px-2 py-1 rounded text-xs font-medium'
     return 'bg-gray-500 text-white px-2 py-1 rounded text-xs font-medium'
   }
 
