@@ -11,6 +11,11 @@ type Proxy = {
   speed: number | null
 }
 
+function isInvalidIp(ip: string) {
+  if (!ip || ip === '0.0.0.0' || ip === '127.0.0.1' || ip.endsWith('.0')) return true
+  return false
+}
+
 export default function Home() {
   const [proxies, setProxies] = useState<Proxy[]>([])
   const [loading, setLoading] = useState(true)
@@ -31,7 +36,8 @@ export default function Home() {
         }
         const data = await res.json()
         const arr = Array.isArray(data) ? data : []
-        setProxies(arr)
+        const cleaned = arr.filter((p: any) => p.ip && !isInvalidIp(p.ip))
+        setProxies(cleaned)
         setError(null)
       } catch (err: any) {
         if (err.name !== 'AbortError') {
