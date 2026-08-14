@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 
-// Cache 5 phút
 export const revalidate = 300
 
 type Proxy = {
@@ -12,44 +11,96 @@ type Proxy = {
   speed: number | null
 }
 
-function normalize(raw: any): Proxy[] {
-  if (!Array.isArray(raw)) return []
-  return raw.map((item: any) => ({
-    ip: String(item.ip || item.address || item.host || ''),
-    port: Number(item.port || 0),
-    protocol: String(item.protocol || item.type || '').toLowerCase(),
-    country: item.country || item.country_code || null,
-    uptime: item.uptime ?? item.uptimePercent ?? null,
-    speed: item.speed ?? item.latency ?? null,
-  })).filter(p => p.ip && p.port > 0)
+async function fetchWithTimeout(url: string, ms = 10000) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), ms)
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        accept: 'application/json, text/plain, */*',
+        'user-agent': 'Mozilla/5.0',
+      },
+      next: { revalidate: 300 },
+    })
+    return res
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
-async function fetchFromProxifly() {
-  const url = new URL('https://api.proxifly.dev/v1/proxies')
-  url.searchParams.set('limit', '500')
-  url.searchParams.set('protocol', 'all')
+function normalizeJson(raw: any): Proxy[] {
+  const arr = Array.isArray(raw) ? raw : raw?.proxies || raw?.data || []
+  return arr
+    .map((item: any) => ({
+      ip: String(item.ip || item.address || item.host || '').trim(),
+      port: Number(item.port || 0),
+      protocol: String(item.protocol || item.type || 'http').toLowerCase().trim(),
+      country: item.country || item.country_code || null,
+      uptime: item.uptime ?? item.uptimePercent ?? null,
+      speed: item.speed ?? item.latency ?? null,
+    }))
+    .filter((p: any) => p.ip && p.port > 0)
+}
 
-  const res = await fetch(url.toString(), {
-    headers: { accept: 'application/json' },
-    next: { revalidate: 300 },
-  })
-
-  if (!res.ok) {
-    throw new Error(`Proxifly API error: ${res.status}`)
+function normalizeText(raw: string): Proxy[] {
+  const lines = raw.split('\n')
+  const proxies: Proxy[] = []
+  for (const line of lines) {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length >= 2) {
+      const ip = parts[0]
+      const port = Number(parts[1])
+      const protocol = (parts[2] || 'http').toLowerCase()
+      if (ip && port > 0) {
+        proxies.push({ ip, port, protocol, country: parts[3] || null, uptime: null, speed: null })
+      }
+    }
   }
-  const json = await res.json()
-  return normalize(Array.isArray(json) ? json : json.proxies)
+  return proxies
 }
 
 export async function GET() {
   try {
-    const proxies = await fetchFromProxifly()
+    const sources = [
+      { url: 'https://api.proxifly.dev/v1/proxies?limit=500&protocol=all', type: 'json' as const },
+      { url: 'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/all.txt', type: 'text' as const },
+      { url: 'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/all.txt', type: 'text' as const },
+    ]
+
+    let proxies: Proxy[] = []
+
+    for (const source of sources) {
+      try {
+        const res = await fetchWithTimeout(source.url)
+        if (!res.ok) continue
+        const text = await res.text()
+        if (!text || text.length < 10) continue
+
+        if (source.type === 'json') {
+          try {
+            const json = JSON.parse(text)
+            proxies = normalizeJson(json)
+          } catch {
+            continue
+          }
+        } else {
+          proxies = normalizeText(text)
+        }
+
+        if (proxies.length > 0) break
+      } catch {
+        continue
+      }
+    }
+
+    if (proxies.length === 0) {
+      return NextResponse.json({ error: 'Không thể tải danh sách proxy. Vui lòng thử lại sau.' }, { status: 502 })
+    }
+
     return NextResponse.json(proxies)
   } catch (err: any) {
-    console.error('Failed to fetch proxy list', err)
-    return NextResponse.json(
-      { error: 'Không thể tải danh sách proxy lúc này.' },
-      { status: 502 }
-    )
+    console.error('Proxy API error:', err)
+    return NextResponse.json({ error: 'Lỗi server. Vui lòng thử lại sau.' }, { status: 500 })
   }
 }
