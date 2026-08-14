@@ -24,23 +24,42 @@ export default function Home() {
     const controller = new AbortController()
     const fetchProxies = async () => {
       try {
-        const res = await fetch('/api/proxies', { signal: controller.signal })
-        if (!res.ok) throw new Error('Lỗi tải proxy list')
+        const url = new URL('https://api.proxifly.dev/v1/proxies')
+        url.searchParams.set('limit', '500')
+        url.searchParams.set('protocol', 'all')
+
+        const res = await fetch(url.toString(), {
+          signal: controller.signal,
+          headers: { accept: 'application/json' },
+        })
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
         const data = await res.json()
-        if (Array.isArray(data)) {
-          setProxies(data)
-        } else if (Array.isArray(data.proxies)) {
-          setProxies(data.proxies)
-        } else {
-          setProxies([])
-        }
+        const arr = Array.isArray(data) ? data : data.proxies || []
+
+        const normalized = arr
+          .map((item: any) => ({
+            ip: String(item.ip || item.address || item.host || '').trim(),
+            port: Number(item.port || 0),
+            protocol: String(item.protocol || item.type || 'http').toLowerCase(),
+            country: item.country || item.country_code || null,
+            uptime: item.uptime ?? item.uptimePercent ?? null,
+            speed: item.speed ?? item.latency ?? null,
+          }))
+          .filter((p: any) => p.ip && p.port > 0)
+
+        setProxies(normalized)
         setError(null)
       } catch (err: any) {
-        if (err.name !== 'AbortError') setError(err.message || 'Lỗi không xác định')
+        if (err.name !== 'AbortError') {
+          setError(err.message || 'Không thể tải danh sách proxy')
+        }
       } finally {
         setLoading(false)
       }
     }
+
     fetchProxies()
     return () => controller.abort()
   }, [])
